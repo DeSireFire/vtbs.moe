@@ -1,25 +1,40 @@
 import { deflate } from 'zlib'
 import { promisify } from 'util'
 
-import { macro, num } from './database.js'
-import { io } from './interface/io.js'
+import * as vdb from './interface/vdb.js'
+import { ioRaw as io, updateInfoArrayMapRaw, infoArray, getWormArray } from './interface/io.js'
+import { site, active, guard, fullGuard, guardType, status, macro, num, info } from './database.js'
 
 const deflateAsync = promisify(deflate)
 
 const metaMap = new WeakMap()
 
-const wsRouter = ({ socket, info, vdb }) => ([key, ...rest], map = []) => {
+const fillInfoArray = async () => {
+  const mids = (await vdb.get()).map(({ mid }) => mid)
+  const arrayPromise = await Promise.all(mids.map(mid => info.get(mid)))
+  arrayPromise.filter(Boolean)
+    .forEach(({ mid, ...newInfo }) => updateInfoArrayMapRaw(mid, { mid, ...newInfo }))
+}
+await fillInfoArray()
+console.log('fillInfoArray')
+
+const wsRouter = ({ socket }) => ([key, ...rest], map = []) => {
   if (map.includes(key)) {
     return undefined
   }
-  const handler = wsRouter({ socket, info, vdb })
+  const handler = wsRouter({ socket })
   const handlerTable = new Proxy({
     vdbTable: () => vdb.getVdbTable(),
     fullInfo: async () => {
-      const vtbs = await vdb.get()
-      const infoArray = (await Promise.all(vtbs.map(({ mid }) => mid).map(mid => info.get(mid))))
+      const vtbs = await vdb.getPure()
+      return (await Promise.all(vtbs.map(({ mid }) => mid).map(async mid => {
+        const i = await info.get(mid)
+        if (i) {
+          return { ...i, mid }
+        }
+        return undefined
+      })))
         .filter(Boolean)
-      return infoArray
     },
     async guardMacroK([week = false]) {
       const kNum = await num.get(week ? 'guardMacroWeekKNum' : 'guardMacroKNum')
@@ -28,8 +43,7 @@ const wsRouter = ({ socket, info, vdb }) => ([key, ...rest], map = []) => {
       return result
     },
     devHashRank: () => Object
-      .entries(Object
-        .values(io.of('/').connected)
+      .entries([...(io.of('/').sockets.values())]
         .map(s => metaMap.get(s))
         .map(({ hash = 'undefined' }) => hash)
         .reduce((hashs, hash) => {
@@ -53,16 +67,14 @@ const wsRouter = ({ socket, info, vdb }) => ([key, ...rest], map = []) => {
   return handlerTable[key](rest)
 }
 
-export const infoFilter = ({ mid, uuid, uname, roomid, sign, face, rise, archiveView, follower, liveStatus, guardNum, lastLive, guardType, online, title }) => ({ mid, uuid, uname, roomid, sign, face, rise, archiveView, follower, liveStatus, guardNum, lastLive, guardType, online, title })
-
 export const linkDanmaku = ({ io, cState }) => {
   cState.subscribe('cluster').on('danmaku', (nickname, danmaku) => {
     io.emit('danmaku', { nickname, danmaku })
   })
 }
 
-export const connect = ({ site, info, active, guard, vdb, fullGuard, guardType, PARALLEL, INTERVAL, wormResult, status }) => async socket => {
-  const newHandler = wsRouter({ info, vdb, socket })
+export const connect = ({ PARALLEL, INTERVAL }) => async socket => {
+  const newHandler = wsRouter({ socket })
   const handler = e => socket.on(e, async (target, arc) => {
     if (typeof arc === 'function') {
       const arcDeflate = async data => arc(await deflateAsync(JSON.stringify(data)))
@@ -77,34 +89,29 @@ export const connect = ({ site, info, active, guard, vdb, fullGuard, guardType, 
       }
 
       if (e === 'vupMacroCompressed') {
-        socket.join('vupMacro', async () => {
-          const macroNum = await num.get('vupMacroNum')
-          arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vup', num: macroNum }))
-        })
+        socket.join('vupMacro')
+        const macroNum = await num.get('vupMacroNum')
+        arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vup', num: macroNum }))
       }
       if (e === 'vtbMacroCompressed') {
-        socket.join('vtbMacro', async () => {
-          const macroNum = await num.get('vtbMacroNum')
-          arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vtb', num: macroNum }))
-        })
+        socket.join('vtbMacro')
+        const macroNum = await num.get('vtbMacroNum')
+        arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vtb', num: macroNum }))
       }
       if (e === 'vtbMacroWeekCompressed') {
-        socket.join('vtbMacro', async () => {
-          const macroNum = await num.get('vtbMacroNum')
-          const skip = macroNum - 24 * 60 * 7 / 5
-          arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vtb', num: Math.min(24 * 60 * 7 / 5, macroNum), skip: Math.max(0, skip) }))
-        })
+        socket.join('vtbMacro')
+        const macroNum = await num.get('vtbMacroNum')
+        const skip = macroNum - 24 * 60 * 7 / 5
+        arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'vtb', num: Math.min(24 * 60 * 7 / 5, macroNum), skip: Math.max(0, skip) }))
       }
       if (e === 'guardMacroCompressed') {
-        socket.join('guardMacro', async () => {
-          const macroNum = await num.get('guardMacroNum')
-          arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'guard', num: macroNum }))
-        })
+        socket.join('guardMacro')
+        const macroNum = await num.get('guardMacroNum')
+        arcTimeSeriesDeflate(await macro.bulkGet({ mid: 'guard', num: macroNum }))
       }
       if (e === 'info') {
-        socket.join(target, async () => {
-          arc(await info.get(target))
-        })
+        socket.join(target)
+        arc(await info.get(target))
       }
       if (e === 'bulkActiveCompressed') {
         const { recordNum, mid } = target
@@ -146,14 +153,6 @@ export const connect = ({ site, info, active, guard, vdb, fullGuard, guardType, 
     metaMap.set(socket, { ...metaMap.get(socket), cdn })
   })
 
-  io.clients((error, clients) => {
-    if (error) {
-      console.error(error)
-    }
-    io.emit('online', clients.length)
-  })
-
-  console.log('a user connected')
   handler('new')
   handler('vupMacroCompressed')
   handler('vtbMacroCompressed')
@@ -172,25 +171,12 @@ export const connect = ({ site, info, active, guard, vdb, fullGuard, guardType, 
       socket.join(room)
     }
   })
-  socket.on('disconnect', () => {
-    io.clients((error, clients) => {
-      if (error) {
-        console.error(error)
-      }
-      io.emit('online', clients.length)
-    })
-    console.log('user disconnected')
-  })
   socket.emit('log', `ID: ${socket.id}`)
-  const vtbs = await vdb.get()
+  const vtbs = await vdb.getPure()
   socket.emit('vtbs', vtbs)
-  const infoArray = (await Promise.all(vtbs.map(({ mid }) => mid).map(mid => info.get(mid))))
-    .filter(Boolean)
-    .map(infoFilter)
+  socket.emit('info', infoArray())
 
-  socket.emit('info', infoArray)
-
-  socket.emit('worm', wormResult())
+  socket.emit('worm', getWormArray())
 
   for (let i = 0; i < PARALLEL; i++) {
     socket.emit('spiderUpdate', await site.get({ mid: 'spider', num: i }))

@@ -1,9 +1,6 @@
 [submodule "src/assets/biliob-frontend"]
 	path = src/assets/biliob-frontend
 	url = https://github.com/Jannchie/biliob-frontend.git
-[submodule "hawk/dictionary"]
-	path = hawk/dictionary
-	url = https://github.com/dd-center/dictionary
 [submodule "BiliChat"]
 	path = BiliChat
 	url = https://github.com/dd-center/BiliChat
@@ -16,6 +13,3 @@
 [submodule "api/mock/Cluster-center"]
 	path = api/mock/Cluster-center
 	url = https://github.com/dd-center/Cluster-center.git
-[submodule "api/mock/bilibili-vtuber-live-danmaku-relay"]
-	path = api/mock/bilibili-vtuber-live-danmaku-relay
-	url = https://github.com/dd-center/bilibili-vtuber-live-danmaku-relay.git

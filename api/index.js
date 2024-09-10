@@ -1,31 +1,44 @@
+import http from 'http'
+import cluster from 'node:cluster'
+
 import spider from './spider.js'
 
 import ant from './ant.js'
 
-import http from 'http'
-
-import { vd, vdSocket, hawk, vdb, biliAPI, stateSocket, cState, io } from './interface/index.js'
-
-import { site, num, info, active, live, guard, macro, fullGuard, guardType, status } from './database.js'
+import { vd } from './interface/vd.js'
+import { hawk } from './interface/hawk.js'
+import * as vdb from './interface/vdb.js'
+import { socket as stateSocket } from './interface/state.js'
+import { ioRaw, setupConnectionLimit, setupConnectionMaster } from './interface/io.js'
 
 import snake from './snake.js'
-import { worm, wormResult } from './worm.js'
 
-import { connect, infoFilter, linkDanmaku } from './socket.js'
+import { connect } from './socket.js'
 import httpAPI from './http.js'
 
 const PARALLEL = 16
 const INTERVAL = 1000 * 60 * 5
 
-linkDanmaku({ cState, io })
-stateSocket.on('log', log => io.to('state').emit('stateLog', log))
-vdb.bind(io)
-const server = http.createServer(httpAPI({ info, fullGuard, active, live, num, macro, guard }))
-io.attach(server)
-vd.attach(server)
-spider({ INTERVAL, vdb, db: { site, info, active, guard, guardType, status }, io, worm, biliAPI, infoFilter })
-snake({ vdSocket, io, info })
-hawk({ io })
-ant({ vdb, macro, num, info, fullGuard, guardType, INTERVAL, io, biliAPI })
-io.on('connection', connect({ vdb, site, info, active, guard, fullGuard, guardType, PARALLEL, INTERVAL, wormResult, status }))
-server.listen(8001)
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+if (cluster.isPrimary) {
+  console.log('starting spider')
+  spider({ INTERVAL })
+  ant({ INTERVAL })
+  const server = http.createServer()
+  setupConnectionMaster(server)
+  await wait(2000)
+  server.listen(8001)
+  console.log('listening on 8001')
+} else {
+  console.log('oh no, I am a worker')
+  stateSocket.on('log', log => ioRaw.to('state').emit('stateLog', log))
+  vdb.bind(ioRaw)
+  const server = http.createServer(httpAPI())
+  ioRaw.attach(server)
+  vd.attach(server)
+  snake()
+  hawk(ioRaw)
+  ioRaw.on('connection', connect({ PARALLEL, INTERVAL }))
+  setupConnectionLimit()
+}

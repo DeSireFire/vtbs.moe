@@ -12,18 +12,21 @@ Vue.use(Router)
 export default new Router({
   mode: 'history',
   base: process.env.BASE_URL,
-  scrollBehavior(to, _from, savedPosition) {
+  scrollBehavior(to, from, savedPosition) {
     if (to.hash) {
       return { selector: to.hash }
     }
     if (savedPosition) {
       return savedPosition
     }
+    if (from.path === to.path) {
+      return undefined
+    }
     return { x: 0, y: 0 }
   },
   routes: [{
     path: '/',
-    alias: ['/live', '/rise', '/drop'],
+    alias: ['/live', '/rise', '/drop', '/guard', '/secret'],
     name: 'home',
     component: Home,
   }, {

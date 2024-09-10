@@ -1,36 +1,79 @@
-export default ({ vdSocket, io, info }) => {
+import { vdSocket } from './interface/vd.js'
+import { to, emit, updateInfoArrayMap } from './interface/io.js'
+
+import { info } from './database.js'
+
+const TEN_MINUTES = 10 * 60 * 1000
+
+const wasOnline = new Map()
+
+const online = (id, liveStatus) => {
+  wasOnline.delete(id)
+  const now = Date.now()
+  const data = { liveStatus, now }
+
+  wasOnline.set(id, data)
+  setTimeout(() => {
+    if (wasOnline.get(id) === data) {
+      wasOnline.delete(id)
+    }
+  }, TEN_MINUTES)
+}
+
+const onlineStatus = id => wasOnline.has(id) && wasOnline.get(id).liveStatus
+
+export default () => {
   let updatePending = new Set()
   vdSocket.on('LIVE', async ({ mid, roomid }) => {
+    online(mid, 1)
     let currentInfo = await info.get(mid)
     currentInfo = { ...currentInfo, liveStatus: 1 }
+    updateInfoArrayMap(mid, currentInfo)
     await info.put(mid, currentInfo)
     updatePending.add(mid)
-    io.to(mid).emit('detailInfo', { mid, data: currentInfo })
+    to(mid).emit(['detailInfo', { mid, data: currentInfo }])
   })
   vdSocket.on('PREPARING', async ({ mid, roomid }) => {
+    online(mid, 0)
     let currentInfo = await info.get(mid)
     currentInfo = { ...currentInfo, liveStatus: 0, online: 0 }
+    updateInfoArrayMap(mid, currentInfo)
     await info.put(mid, currentInfo)
     updatePending.add(mid)
-    io.to(mid).emit('detailInfo', { mid, data: currentInfo })
+    to(mid).emit(['detailInfo', { mid, data: currentInfo }])
   })
   vdSocket.on('ROUND', async ({ mid, roomid }) => {
+    online(mid, 0)
     let currentInfo = await info.get(mid)
     currentInfo = { ...currentInfo, liveStatus: 0, online: 0 }
+    updateInfoArrayMap(mid, currentInfo)
     await info.put(mid, currentInfo)
     updatePending.add(mid)
-    io.to(mid).emit('detailInfo', { mid, data: currentInfo })
+    to(mid).emit(['detailInfo', { mid, data: currentInfo }])
   })
   vdSocket.on('online', async ({ online, mid }) => {
     let currentInfo = await info.get(mid)
-    let { liveStatus } = currentInfo
-    currentInfo = { ...currentInfo, online: liveStatus && online }
+    const liveStatus = onlineStatus(mid)
+    if (online === 1) {
+      if (liveStatus === 1) {
+        currentInfo = { ...currentInfo, liveStatus, online }
+      } else {
+        currentInfo = { ...currentInfo, liveStatus: 0, online: 0 }
+      }
+    } else {
+      if (liveStatus === 0) {
+        currentInfo = { ...currentInfo, liveStatus, online: 0 }
+      } else {
+        currentInfo = { ...currentInfo, online }
+      }
+    }
+    updateInfoArrayMap(mid, currentInfo)
     await info.put(mid, currentInfo)
     if (online > 1) {
       updatePending.add(mid)
-      io.to(mid).emit('detailInfo', { mid, data: currentInfo })
+      to(mid).emit(['detailInfo', { mid, data: currentInfo }])
     }
-    io.to(mid).emit('detailLive', { mid, data: { online, time: Date.now() } })
+    to(mid).emit(['detailLive', { mid, data: { online, time: Date.now() } }])
   })
   vdSocket.on('title', async ({ mid, title }) => {
     let currentInfo = await info.get(mid)
@@ -39,12 +82,13 @@ export default ({ vdSocket, io, info }) => {
     if (liveStatus) {
       updatePending.add(mid)
     }
+    updateInfoArrayMap(mid, currentInfo)
     await info.put(mid, currentInfo)
   })
   setInterval(async () => {
     if (updatePending.size) {
-      io.emit('info', await Promise.all([...updatePending].map(mid => info.get(mid))))
-      io.emit('log', `Snake: Refresh ${updatePending.size}`)
+      emit(['info', await Promise.all([...updatePending].map(mid => info.get(mid)))])
+      emit(['log', `Snake: Refresh ${updatePending.size}`])
       console.log(`Snake: Refresh ${updatePending.size}`)
       updatePending = new Set()
     }

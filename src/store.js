@@ -1,24 +1,11 @@
 import Vue from 'vue'
 import Vuex from 'vuex'
-import { Notification } from 'element-ui'
-import Push from 'push.js'
 import router from './router'
 import cache from './cache'
 
-const liveNotification = ({ mid, uname, title }, msg = '开播了') => {
-  Push.create(`${uname} ${msg}!`, {
-    body: title,
-    requireInteraction: true,
-    onClick: function() {
-      router.push(`/detail/${mid}`)
-      this.close()
-    },
-  })
-}
-
 Vue.use(Vuex)
 
-const rank = target => (state, getters) => [...getters.vtbs].sort((a, b) => {
+const rank = target => (state, getters) => [...getters.validVtbs].sort((a, b) => {
   if (!getters.info[a.mid] && !getters.info[b.mid]) {
     return 0
   }
@@ -36,6 +23,7 @@ const x = new Vuex.Store({
     online: 0,
     currentVtbs: [],
     cachedVtbs: [],
+    secretList: [],
     currentInfo: {},
     cachedInfo: {},
     cachedTime: 0,
@@ -56,6 +44,9 @@ const x = new Vuex.Store({
     vtbs(state) {
       return state.currentVtbs.length ? state.currentVtbs : state.cachedVtbs
     },
+    validVtbs(_, getters) {
+      return getters.vtbs.filter(vtb => getters.info[vtb.mid])
+    },
     info(state) {
       return Object.keys(state.currentInfo).length ? state.currentInfo : state.cachedInfo
     },
@@ -64,6 +55,7 @@ const x = new Vuex.Store({
     },
     followerRank: rank((state, a, b) => b.follower - a.follower),
     riseRank: rank((state, a, b) => b.rise - a.rise),
+    guardRank: rank((state, a, b) => b.guardNum - a.guardNum),
     liveRank(state, getters) {
       return getters.vtbs
         .map(({ mid }) => getters.info[mid] || { mid })
@@ -85,11 +77,20 @@ const x = new Vuex.Store({
           return 100000000000 * (liveDifference + roomDifference + liveStatus) + 1000000 * guardDifference + b.follower - a.follower
         })
     },
+    secretRank(state, getters) {
+      console.log(state.secretList)
+      return state.secretList
+        .map(({ mid }) => getters.info[mid] || { mid })
+        .sort((a, b) => ((b.follower || 0) - (a.follower || 0)))
+    },
   },
   mutations: {
     SOCKET_vtbs(state, data) {
       cache.put('vdb', data)
       state.currentVtbs = [...data]
+    },
+    setSecrets(state, secretdata) {
+      state.secretList = [...secretdata];
     },
     loadCache(state, { vdb, info, time, face }) {
       if (vdb) {
@@ -109,21 +110,7 @@ const x = new Vuex.Store({
       let info = { ...state.currentInfo }
       let face = { ...state.currentFace }
       for (let i = 0; i < data.length; i++) {
-        let { mid, uname, title } = data[i]
-        if (info[mid] && !info[mid].liveStatus && data[i].liveStatus) {
-          setTimeout(() => {
-            if (JSON.parse(localStorage.getItem(mid))) {
-              liveNotification({ mid, uname, title })
-            }
-            Notification({
-              iconClass: 'el-icon-ship',
-              title: `${uname} 开播了!`,
-              message: title,
-            })
-          }, 5000 * Math.random())
-        } else if (!info[mid] && data[i].liveStatus && JSON.parse(localStorage.getItem(mid))) {
-          liveNotification({ mid, uname, title }, '直播中')
-        }
+        let { mid } = data[i]
         info[mid] = data[i]
         if (!face[mid]) {
           face[mid] = data[i].face
@@ -200,7 +187,20 @@ const x = new Vuex.Store({
       }
     },
   },
-  actions: {},
+  actions: {
+    fetchSecretList({ commit, state }) {
+      if (state.secretList.length) {
+        return
+      }
+      return fetch("https://api.vtbs.moe/v1/secret") //dev stage
+        .then((response) => response.json())
+        .then((data) => {
+          commit("setSecrets", data);
+          console.log(data);
+        })
+        .catch((err) => console.error(err));
+    }
+  },
 })
 
 window.x = x

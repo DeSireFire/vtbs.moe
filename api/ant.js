@@ -1,9 +1,15 @@
 import { guardMacroK } from './unit/index.js'
-import { waitStatePending } from './interface/index.js'
+import * as vdb from './interface/vdb.js'
+import { biliAPI } from './interface/biliapi.js'
+import { waitStatePending } from './interface/state.js'
+import { to, emit } from './interface/io.js'
+
+
+import { num, info, macro, fullGuard, guardType, status } from './database.js'
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-const vup = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
+const vup = async ({ INTERVAL, log }) => {
   await wait(INTERVAL - ((new Date()).getTime() - ((await macro.get({ mid: 'vup', num: (await num.get('vupMacroNum') || 0) })) || { time: 0 }).time))
   for (;;) {
     const startTime = (new Date()).getTime()
@@ -17,7 +23,7 @@ const vup = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
       time: startTime,
     }
 
-    const vtbs = await vdb.get()
+    const vtbs = await vdb.getPure()
 
     for (let i = 0; i < vtbs.length; i++) {
       const { video = 0, archiveView = 0 } = (await info.get(vtbs[i].mid) || {})
@@ -27,14 +33,14 @@ const vup = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
 
     await macro.put({ mid: 'vup', num: macroNum, value: sum })
     await num.put('vupMacroNum', macroNum)
-    io.to('vupMacro').emit('vupMacro', sum)
+    to('vupMacro').emit(['vupMacro', sum])
     log('VUP Macroeconomics Update')
     const endTime = (new Date()).getTime()
     await wait(INTERVAL - (endTime - startTime))
   }
 }
 
-const vtb = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
+const vtb = async ({ INTERVAL, log }) => {
   for (;;) {
     const startTime = (new Date()).getTime()
 
@@ -47,7 +53,7 @@ const vtb = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
       time: startTime,
     }
 
-    const vtbs = await vdb.get()
+    const vtbs = await vdb.getPure()
 
     for (let i = 0; i < vtbs.length; i++) {
       const { liveStatus = 0, online = 0 } = (await info.get(vtbs[i].mid) || {})
@@ -67,14 +73,14 @@ const vtb = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
 
     await macro.put({ mid: 'vtb', num: macroNum, value: sum })
     await num.put('vtbMacroNum', macroNum)
-    io.to('vtbMacro').emit('vtbMacro', sum)
+    to('vtbMacro').emit(['vtbMacro', sum])
     log('VTB Macroeconomics Update')
     const endTime = (new Date()).getTime()
     await wait(INTERVAL - (endTime - startTime))
   }
 }
 
-const guard = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
+const guardF = async ({ INTERVAL, log }) => {
   for (;;) {
     const startTime = (new Date()).getTime()
     const pause = wait(INTERVAL)
@@ -87,7 +93,7 @@ const guard = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
       time: startTime,
     }
 
-    const vtbs = await vdb.get()
+    const vtbs = await vdb.getPure()
 
     for (let i = 0; i < vtbs.length; i++) {
       const { guardNum = 0 } = (await info.get(vtbs[i].mid) || {})
@@ -105,29 +111,40 @@ const guard = async ({ vdb, macro, info, num, INTERVAL, log, io }) => {
     await macro.put({ mid: 'guard', num: macroNum, value: sum })
     await num.put('guardMacroNum', macroNum)
     await guardMacroK(macroNum)
-    io.to('guardMacro').emit('guardMacro', sum)
+    to('guardMacro').emit(['guardMacro', sum])
     log('Guard Macroeconomics Update')
     await pause
   }
 }
 
-const dd = async ({ vdb, INTERVAL, fullGuard, guardType, log, biliAPI }) => {
-  const core = mid => biliAPI({ mid }, ['guards', 'guardLevel'], 1000 * 60 * 30).catch(async e => {
+const dd = async ({ INTERVAL, log }) => {
+  const core = (mid, tries = 0) => biliAPI({ mid }, ['guards', 'guardLevel'], 1000 * 60 * 30).catch(async e => {
     console.error(e)
-    log(`Guard RETRY: ${mid}`)
-    await waitStatePending(512)
-    return core(mid)
+    if (tries < 2) {
+      log(`Guard RETRY: ${mid}`)
+      await waitStatePending(384)
+      return core(mid, tries + 1)
+    } else {
+      log(`Guard FAIL: ${mid}`)
+      return { guardLevel: undefined }
+    }
   })
   while (true) {
-    const intervalWait = wait(INTERVAL)
+    const lastGuardUpdate = await status.get('guardMacroNum') || 0
+    const now = Date.now()
+    const nextUpdate = lastGuardUpdate + INTERVAL
+    const waitTime = nextUpdate - now
+    if (waitTime > 0) {
+      log(`Guard Wait ${waitTime}`)
+      await wait(nextUpdate - now)
+    }
 
-    const vtbs = await vdb.get()
+    const vtbs = (await vdb.getPure())
     const mids = vtbs.map(({ mid }) => mid)
 
     await mids
-      .reduce(([last = { p: Promise.resolve() }, ...objectP], mid) => {
-        const p = last.p.then(() => waitStatePending(384))
-        return [{ mid, core: p.then(() => core(mid)), p }, last.core && last, ...objectP]
+      .reduce(([last = { core: Promise.resolve() }, ...rest], mid) => {
+        return [{ mid, core: last.core.then(() => waitStatePending(384)).then(() => core(mid)) }, last.mid && last, ...rest]
       }, [])
       .filter(Boolean)
       .reverse()
@@ -135,9 +152,11 @@ const dd = async ({ vdb, INTERVAL, fullGuard, guardType, log, biliAPI }) => {
         await p
         const { mid, core } = object
         const { guards, guardLevel } = await core
-        await guardType.put(mid, guardLevel)
-        await fullGuard.put(mid, guards.map(o => ({ mid: o.uid, uname: o.username, face: o.face, level: o.guard_level - 1 })))
-        log(`Guard: ${i + 1}/${vtbs.length}`)
+        if (guardLevel) {
+          await guardType.put(mid, guardLevel)
+          await fullGuard.put(mid, guards.map(o => ({ mid: o.uid, uname: o.username, face: o.face, level: o.guard_level - 1 })))
+          log(`Guard: ${i + 1}/${vtbs.length}`)
+        }
       }, Promise.resolve(233))
 
     const all = {}
@@ -164,17 +183,17 @@ const dd = async ({ vdb, INTERVAL, fullGuard, guardType, log, biliAPI }) => {
     await fullGuard.put('number', Object.keys(all).length)
     log(`Guard: Count ${Object.keys(all).length}`)
 
-    await intervalWait
+    await status.put('guardMacroNum', Date.now())
   }
 }
 
-export default ({ vdb, macro, info, num, fullGuard, guardType, INTERVAL, io, biliAPI }) => {
+export default ({ INTERVAL }) => {
   const log = log => {
     console.log(log)
-    io.emit('log', log)
+    emit(['log', log])
   }
-  vup({ vdb, macro, info, num, INTERVAL: 1000 * 60 * 60 * 24, log, io })
-  vtb({ vdb, macro, info, num, INTERVAL, log, io })
-  guard({ vdb, macro, info, num, INTERVAL, log, io })
-  dd({ vdb, INTERVAL: 1000 * 60 * 60 * 24, fullGuard, guardType, log, biliAPI })
+  vup({ INTERVAL: 1000 * 60 * 60 * 24, log })
+  vtb({ INTERVAL, log })
+  guardF({ INTERVAL, log })
+  dd({ INTERVAL: 1000 * 60 * 60 * 24, log })
 }

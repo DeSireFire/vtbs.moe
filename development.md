@@ -2,7 +2,12 @@
 
 #### 前置要求
 
-- node 版本最新, 推荐 `14.10.1`
+- node 版本最新, 推荐 `18`
+
+Windows 可能需要先安装 `win-node-env`
+```shell
+npm install -g win-node-env
+```
 
 #### 安装依赖:
 

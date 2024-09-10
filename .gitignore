@@ -1,7 +1,10 @@
 cdn.js
 
-/db
+!/db/.gitkeep
 /static
+/dbjson
+/db-blank
+/hawk
 
 .DS_Store
 node_modules
@@ -28,3 +31,5 @@ selenium-debug.log
 *.sln
 *.sw*
 db.json
+dbjson.zip
+test.js

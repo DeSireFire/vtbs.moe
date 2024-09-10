@@ -1,1 +1,1 @@
-export default ['https://api.vtbs.moe', 'https://api.tokyo.vtbs.moe', 'https://vtbs.musedash.moe']
+export default ['https://api.vtbs.moe', 'https://cfapi.vtbs.moe', 'https://hkapi.vtbs.moe', 'https://kr.vtbs.moe']

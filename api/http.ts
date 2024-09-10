@@ -6,14 +6,14 @@ import Router from '@koa/router'
 
 import LRU from 'lru-cache'
 
-import { roomidMap } from './database.js'
+import { roomidMap, num, info, active, guard, macro, fullGuard } from './database.js'
 import * as vdb from './interface/vdb.js'
 import { hawkEmitter } from './interface/state.js'
 
 import cdn from '../cdn.js'
 
 const cache = new LRU({
-  maxAge: 1000 * 5,
+  ttl: 1000 * 5,
   max: 100,
 })
 
@@ -78,12 +78,13 @@ class BufferStream extends Duplex {
   }
 }
 
-export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
+export default () => {
   const app = new Koa()
 
   app.use(async (ctx, next) => {
     const hit = cache.get(ctx.url)
     ctx.set('Access-Control-Allow-Origin', '*')
+    console.log('http', hit ? 'hit' : 'miss', ctx.url)
     if (hit) {
       ctx.body = hit
     } else {
@@ -99,22 +100,34 @@ export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
   const v1 = new Router({ prefix: '/v1' })
 
   v1.get('/vtbs', async ctx => {
-    ctx.body = await vdb.get()
+    ctx.body = await vdb.getPure()
   })
 
   v1.get('/info', async ctx => {
-    ctx.body = (await Promise.all((await vdb.get()).map(({ mid }: { mid: number }) => info.get(mid)))).filter(Boolean)
+    ctx.body = (await Promise.all((await vdb.getPure()).map(({ mid }: { mid: number }) => info.get(mid)))).filter(Boolean)
+  })
+
+  v1.get('/infoa', async ctx => {
+    ctx.body = await info.values().all()
+  })
+
+  v1.get('/secret', async ctx => {
+    ctx.body = await vdb.getSecret()
+  })
+
+  v1.get('/secretInfo', async ctx => {
+    ctx.body = (await Promise.all((await vdb.getSecret()).map(({ mid }: { mid: number }) => info.get(mid)))).filter(Boolean)
   })
 
   v1.get('/fullInfo', async ctx => {
     const vdbTable = await vdb.getVdbTable();
-    ctx.body = (await Promise.all((await vdb.get()).map(({ mid }: { mid: number }) => info.get(mid))))
+    ctx.body = (await Promise.all((await vdb.getPure()).map(({ mid }: { mid: number }) => info.get(mid))))
       .filter(Boolean)
       .map(({ uuid, ...rest }) => ({ ...rest, uuid, vdb: vdbTable[uuid] }))
   })
 
   v1.get('/short', async ctx => {
-    ctx.body = (await Promise.all((await vdb.get()).map(({ mid }: { mid: number }) => info.get(mid))))
+    ctx.body = (await Promise.all((await vdb.getPure()).map(({ mid }: { mid: number }) => info.get(mid))))
       .filter(Boolean)
       .map(({ mid, uname, roomid }) => ({ mid, uname, roomid }))
   })
@@ -134,7 +147,7 @@ export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
   })
 
   v1.get('/living', async ctx => {
-    const vdbList = await vdb.get()
+    const vdbList = await vdb.getPure()
     const infos = await Promise.all(vdbList.map(({ mid }: { mid: number }) => info.get(mid)))
     const livingRooms = infos
       .filter(Boolean)
@@ -253,7 +266,7 @@ export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
   endpoint.get('/vtbs', async ctx => {
     ctx.body = {
       ...endpointSchema,
-      message: String((await vdb.get()).length),
+      message: String((await vdb.getPure()).length),
       label: 'vtubers',
       color: 'blue',
     }
@@ -280,7 +293,7 @@ export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
   // })
 
   endpoint.get('/live', async ctx => {
-    let vtbs = [...await vdb.get()]
+    let vtbs = [...await vdb.getPure()]
     let liveStatusSum = (await Promise.all([...vtbs
       .map(({ mid }) => info.get(mid))
       .map(async promise => (await promise || {}).liveStatus || 0)]))
@@ -294,7 +307,7 @@ export default ({ info, fullGuard, active, live, num, macro, guard }: any) => {
   })
 
   endpoint.get('/onlineSum', async ctx => {
-    let vtbs = [...await vdb.get()]
+    let vtbs = [...await vdb.getPure()]
     let onlineSum = (await Promise.all([...vtbs
       .map(({ mid }) => info.get(mid))
       .map(async promise => (await promise || {}).online || 0)]))

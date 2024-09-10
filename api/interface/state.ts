@@ -1,6 +1,6 @@
 import CState from '../../state-center/api.js'
 
-export const cState = new CState({ name: 'vtbs.moe' })
+export const cState = new CState({ name: `vtbs.moe-${Math.random()}` })
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -22,3 +22,9 @@ export const getPending = () => Promise.race([clusterAsker('pending'), wait(1000
 export const hawkEmitter = cState.subscribe('hawk')
 
 export const socket = cState.socket
+
+export const waitStatePending = async (n = 256) => {
+  while (await getPending() > n) {
+    await wait(233)
+  }
+}

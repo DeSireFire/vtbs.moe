@@ -1,52 +1,40 @@
-import levelup, { LevelUp } from 'levelup'
-import leveldown from 'leveldown'
-import encode from 'encoding-down'
-import sub from 'subleveldown'
-
-import LRU from 'lru-cache'
-
-const cache = new LRU({
-  max: 100000,
-})
+import { RaveLevel } from 'rave-level'
 
 class LevelDatabase {
   name: string
-  db: LevelUp
+  db: RaveLevel
 
-  constructor({ name, db }: { name: string, db: LevelUp }) {
+  constructor({ name, db }: { name: string, db: RaveLevel }) {
     this.name = name
     this.db = db
   }
   put(key: any, value: any) {
-    cache.set(`${this.name}_${key}`, value)
     return this.db.put(`${this.name}_${key}`, value)
   }
-  async get(key: any) {
-    let value = cache.get(`${this.name}_${key}`)
-    if (!value) {
-      value = await this.db.get(`${this.name}_${key}`).catch(() => undefined)
-      cache.set(`${this.name}_${key}`, value)
-    }
-    return value
+  get(key: any) {
+    return this.db.get(`${this.name}_${key}`).catch(() => undefined)
+  }
+  values() {
+    return this.db.values({ gte: `${this.name}_`, lte: `${this.name}_\xff` })
   }
 }
 
 class SubLevelDatabase<K = any, V = any> {
-  db: LevelUp
+  db: RaveLevel<K, V>
 
-  constructor({ name, db }: { name: string, db: LevelUp }) {
-    this.db = sub<K, V>(db, name, { valueEncoding: 'json' })
+  constructor({ name, db }: { name: string, db: RaveLevel }) {
+    this.db = db.sublevel<K, V>(name, { valueEncoding: 'json' })
   }
   put(key: K, value: V) {
     return this.db.put(key, value)
   }
-  get(key: K): Promise<V | undefined > {
+  get(key: K): Promise<V | undefined> {
     return this.db.get(key).catch(() => undefined)
   }
 }
 
 class ArrayDatabase extends LevelDatabase {
-  constructor({ name, db }: { name: string, db: LevelUp }) {
+  constructor({ name, db }: { name: string, db: RaveLevel }) {
     super({ name, db })
   }
   put({ mid = 0, num = 0, value }: { num: number, mid: any, value: any }) {
@@ -64,12 +52,14 @@ class ArrayDatabase extends LevelDatabase {
   }
 }
 
-let db = levelup(encode(leveldown('./db'), { valueEncoding: 'json' }))
+const db = new RaveLevel<string, any>('./db', { valueEncoding: 'json' })
 export const site = new ArrayDatabase({ name: 'site', db })
 export const num = new LevelDatabase({ name: 'num', db })
 
-export const status = new SubLevelDatabase({ name: 'status', db })
+export const status = new SubLevelDatabase<string, number>({ name: 'status', db })
 export const roomidMap = new SubLevelDatabase<number, number>({ name: 'roomidMap', db })
+export const queue = new SubLevelDatabase<string, string>({ name: 'queue', db })
+export const cache = new SubLevelDatabase<string, any>({ name: 'cache', db })
 
 export const info = new LevelDatabase({ name: 'info', db })
 export const active = new ArrayDatabase({ name: 'active', db })
@@ -97,12 +87,17 @@ status
 spiderLeft: Number
 spiderDuration: Number
 spiderTime: Number
+lastGuardUpdate: Number
 
 roomidMap
 roomid: mid
 
+cache
+vdb: json
+secretList
+
 info
-mid: {mid, uuid, uname, video, roomid, sign, notice, face, rise, topPhoto, archiveView, follower, liveStatus, recordNum, guardNum, lastLive, guardChange, guardType, areaRank, online, title, bot, time, liveStartTime}
+mid: {mid, uuid, uname, video, roomid, sign, notice, face, rise, topPhoto, archiveView, follower, liveStatus, recordNum, guardNum, lastLive, guardChange, guardType, online, title, bot, time, liveStartTime}
 DEPRECATED: liveNum
 
 active

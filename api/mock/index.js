@@ -1,10 +1,14 @@
-import './Cluster-center/index.js'
-import '../../state-center/index.js'
-import './bilibili-vtuber-live-danmaku-relay/index.js'
+import cluster from 'node:cluster'
 
-import '../index.js'
+import('../index.js')
 
-process.env.MOCK = true
-process.env.URL = 'ws://127.0.0.1:9013'
-process.env.INTERVAL = '1200'
-import('./DDatHome-nodejs/index.js')
+if (cluster.isPrimary) {
+  import('../../state-center/index.js')
+
+  process.env.VERBOSE = true
+  process.env.MOCK = true
+  process.env.URL = 'ws://127.0.0.1:9013'
+  process.env.INTERVAL = '1200'
+  import('./DDatHome-nodejs/index.js')
+  import('./Cluster-center/index.js')
+}
